@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#102b50">
+  <title>LAE · Escáner de guías</title>
+  <style>
+    :root{color-scheme:light;--navy:#102b50;--blue:#1769aa;--bg:#f3f6fa;--text:#172334;--muted:#617087;--line:#dce4ee}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text)}
+    header{background:var(--navy);color:white;padding:22px 18px}header h1{margin:0;font-size:1.25rem}header p{margin:5px 0 0;color:#d9e6f7;font-size:.92rem}
+    main{max-width:620px;margin:18px auto;padding:0 14px 28px}.card{background:white;border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 5px 20px #102b5010}
+    #reader{width:100%;overflow:hidden;border-radius:12px}#reader video{object-fit:cover}button{border:0;border-radius:10px;padding:13px 16px;font-size:1rem;font-weight:650;cursor:pointer;width:100%;margin-top:12px;background:var(--blue);color:white}
+    button.secondary{background:#e8eef6;color:var(--navy)}.status{margin-top:14px;padding:12px;border-radius:10px;background:#eef3f8;color:var(--text);line-height:1.4}.status.error{background:#fff0ef;color:#9e2520}.status.success{background:#eaf8ef;color:#17633a}
+    .small{font-size:.88rem;color:var(--muted);line-height:1.5}.guide{font-weight:700;overflow-wrap:anywhere}#start{display:block}#stop{display:none}
+  </style>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<header><h1>LAE Control de Paquetes</h1><p>Escáner de guía</p></header>
+<main><section class="card">
+  <h2 style="margin:0 0 8px">Escanear paquete</h2>
+  <p class="small">Al pulsar iniciar, Chrome solicitará permiso para usar la cámara. La guía se enviará de vuelta a LAE Control de Paquetes; este lector no consulta ni muestra la base de datos.</p>
+  <div id="reader"></div>
+  <button id="start" type="button">Activar cámara y escanear</button>
+  <button id="stop" class="secondary" type="button">Detener cámara</button>
+  <div id="status" class="status" role="status">Preparado. Pulsa «Activar cámara y escanear».</div>
+  <p class="small">Si no se abre la cámara, revisa los permisos de Chrome y asegúrate de abrir esta página directamente, no dentro de otra aplicación.</p>
+</section></main>
+<script>
+(() => {
+  'use strict';
+  const params = new URLSearchParams(location.search);
+  const returnRaw = params.get('returnUrl') || '';
+  let returnUrl;
+  try {
+    const u = new URL(returnRaw);
+    if (u.protocol !== 'https:' || u.hostname !== 'script.google.com' || !/^\/macros\/s\/[^/]+\/exec$/.test(u.pathname)) {
+      throw new Error('URL de retorno no válida. Abre el escáner desde LAE Control de Paquetes.');
+    }
+    returnUrl = u;
+  } catch (e) {
+    document.getElementById('start').disabled = true;
+    document.getElementById('status').className = 'status error';
+    document.getElementById('status').textContent = e.message || 'No se recibió una URL de retorno válida.';
+    return;
+  }
+  const status = document.getElementById('status');
+  const start = document.getElementById('start');
+  const stop = document.getElementById('stop');
+  let reader = null;
+  let active = false;
+  function message(text, type='') { status.textContent=text; status.className='status'+(type?' '+type:''); }
+  async function stopCamera() {
+    if (reader && active) { try { await reader.stop(); } catch (_) {} }
+    if (reader) { try { await reader.clear(); } catch (_) {} }
+    reader=null; active=false; start.style.display='block'; stop.style.display='none';
+  }
+  start.addEventListener('click', async () => {
+    if (active) return;
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      message('Este navegador no permite cámara en esta página. Comprueba que la URL use HTTPS y abre el enlace en Chrome.', 'error'); return;
+    }
+    if (typeof Html5Qrcode === 'undefined') { message('No se pudo cargar el lector QR. Comprueba la conexión a Internet.', 'error'); return; }
+    start.disabled=true;
+    try {
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+      stream.getTracks().forEach(t=>t.stop());
+      reader=new Html5Qrcode('reader'); active=true;
+      start.style.display='none'; stop.style.display='block';
+      message('Cámara activa. Apunta al QR de la guía.');
+      await reader.start({facingMode:'environment'}, {fps:10, qrbox:(w,h)=>{const s=Math.floor(Math.min(w,h)*.72);return {width:s,height:s};}, aspectRatio:1}, async decoded => {
+        const guide=String(decoded||'').trim();
+        if (!guide || guide.length>150) { message('El contenido del QR no parece una guía válida.', 'error'); return; }
+        await stopCamera();
+        message('Guía leída: '+guide+'. Volviendo a la aplicación…', 'success');
+        returnUrl.searchParams.set('guia', guide);
+        location.replace(returnUrl.toString());
+      }, () => {});
+    } catch (e) {
+      await stopCamera(); start.disabled=false;
+      const name=e && e.name ? e.name : 'Error';
+      const detail=e && e.message ? e.message : String(e||'');
+      message('No se pudo abrir la cámara ('+name+'): '+detail+'. Comprueba los permisos del sitio en Chrome.', 'error');
+    }
+  });
+  stop.addEventListener('click', async()=>{await stopCamera();start.disabled=false;message('Cámara detenida. Puedes volver a escanear.');});
+})();
+</script>
+</body></html>
