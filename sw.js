@@ -1,4 +1,5 @@
-const CACHE_NAME = 'lae-scanner-shell-v1.2';
+const CACHE_PREFIX = 'lae-scanner-shell-';
+const CACHE_NAME = 'lae-scanner-shell-v1.3.0';
 const APP_FILES = [
   './',
   './index.html',
@@ -19,11 +20,13 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys
+      .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+      .map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
@@ -31,26 +34,27 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
 
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', copy));
-          return response;
-        })
-        .catch(() => caches.match('./index.html'))
-    );
-    return;
-  }
+  // Los archivos de la app se consultan primero en GitHub Pages. Así una
+  // recarga normal obtiene el último despliegue sin pedir borrar la caché.
+  // La caché queda como respaldo cuando el dispositivo está sin Internet.
+  const cacheKey = new Request(url.origin + url.pathname);
 
-  event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-      if (response.ok && url.origin === self.location.origin) {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(request, { cache: 'no-store' });
+      if (response && response.ok && response.type !== 'opaque') {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put(cacheKey, response.clone());
       }
       return response;
-    }))
-  );
+    } catch (error) {
+      const cached = await caches.match(cacheKey);
+      if (cached) return cached;
+      if (request.mode === 'navigate') {
+        const fallback = await caches.match(new Request(new URL('./index.html', self.registration.scope).toString()));
+        if (fallback) return fallback;
+      }
+      return Response.error();
+    }
+  })());
 });
