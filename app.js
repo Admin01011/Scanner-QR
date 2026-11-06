@@ -14,6 +14,9 @@
     saving: false,
     uncertainWrite: false,
     guide: '',
+    duplicateGuide: null,
+    scannedGuides: new Map(),
+    guideMemoryDateKey: '',
     authPending: false,
     authMode: 'user',
     pendingSaveAfterAuth: false,
@@ -40,11 +43,14 @@
     packageForm: $('packageForm'),
     guideNumber: $('guideNumber'),
     packageWeight: $('packageWeight'),
+    duplicateNotice: $('duplicateNotice'),
+    duplicatePreviousWeight: $('duplicatePreviousWeight'),
     btnSave: $('btnSave'),
     btnRescan: $('btnRescan'),
     saveFeedback: $('saveFeedback'),
     btnRetryUnknown: $('btnRetryUnknown'),
     successPanel: $('successPanel'),
+    successTitle: $('successTitle'),
     successMessage: $('successMessage'),
     successGuide: $('successGuide'),
     successWeight: $('successWeight'),
@@ -77,6 +83,119 @@
 
   function forgetAuthorization() {
     try { localStorage.removeItem(AUTH_MARKER_KEY); } catch (_) { /* Storage no disponible. */ }
+  }
+
+  // Memoria local de guías registradas por este dispositivo durante el día
+  // operativo de Caracas. No consulta Google Sheets ni modifica registros remotos.
+  const GUIDE_MEMORY_PREFIX = 'laeScanner.scannedGuides.v1.';
+
+  function caracasDateKey(date = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: CONFIG.TIME_ZONE || 'America/Caracas',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(date);
+    const values = {};
+    parts.forEach((part) => { values[part.type] = part.value; });
+    return values.year + '-' + values.month + '-' + values.day;
+  }
+
+  function guideMemoryStorageKey(dateKey) {
+    return GUIDE_MEMORY_PREFIX + String(CONFIG.SPREADSHEET_ID || 'default') + '.' + dateKey;
+  }
+
+  function loadGuideMemoryForToday() {
+    const dateKey = caracasDateKey();
+    state.guideMemoryDateKey = dateKey;
+    state.scannedGuides = new Map();
+
+    try {
+      const raw = localStorage.getItem(guideMemoryStorageKey(dateKey));
+      if (raw) {
+        const stored = JSON.parse(raw);
+        if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+          Object.entries(stored).forEach(([guide, entry]) => {
+            const normalizedGuide = String(guide || '').trim();
+            const weightKg = Number(entry && entry.weightKg);
+            if (normalizedGuide && Number.isFinite(weightKg) && weightKg > 0) {
+              state.scannedGuides.set(normalizedGuide, {
+                weightKg,
+                savedAt: String(entry.savedAt || ''),
+                updatedRange: String(entry.updatedRange || '')
+              });
+            }
+          });
+        }
+      }
+
+      // Elimina días anteriores de la memoria de esta aplicación.
+      const scopePrefix = GUIDE_MEMORY_PREFIX + String(CONFIG.SPREADSHEET_ID || 'default') + '.';
+      const currentKey = guideMemoryStorageKey(dateKey);
+      for (let index = localStorage.length - 1; index >= 0; index--) {
+        const key = localStorage.key(index);
+        if (key && key.startsWith(scopePrefix) && key !== currentKey) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch (_) {
+      // Si el almacenamiento está bloqueado, la memoria funciona durante
+      // esta apertura mediante el Map en memoria.
+    }
+  }
+
+  function ensureGuideMemoryIsCurrentDay() {
+    const today = caracasDateKey();
+    if (today !== state.guideMemoryDateKey) {
+      loadGuideMemoryForToday();
+      state.duplicateGuide = null;
+      if (elements.duplicateNotice) elements.duplicateNotice.hidden = true;
+    }
+  }
+
+  function getPreviouslyScannedGuide(guide) {
+    ensureGuideMemoryIsCurrentDay();
+    return state.scannedGuides.get(String(guide || '').trim()) || null;
+  }
+
+  function rememberScannedGuide(guide, weightKg, savedAt, updatedRange) {
+    ensureGuideMemoryIsCurrentDay();
+    const normalizedGuide = String(guide || '').trim();
+    if (!normalizedGuide) return;
+
+    state.scannedGuides.set(normalizedGuide, {
+      weightKg: Number(weightKg),
+      savedAt: String(savedAt || ''),
+      updatedRange: String(updatedRange || '')
+    });
+
+    // Evita que una jornada excepcionalmente grande haga crecer la memoria sin límite.
+    while (state.scannedGuides.size > 2500) {
+      const oldestGuide = state.scannedGuides.keys().next().value;
+      state.scannedGuides.delete(oldestGuide);
+    }
+
+    try {
+      const snapshot = {};
+      state.scannedGuides.forEach((entry, key) => { snapshot[key] = entry; });
+      localStorage.setItem(guideMemoryStorageKey(state.guideMemoryDateKey), JSON.stringify(snapshot));
+    } catch (_) {
+      // El registro en Google ya quedó confirmado; el Map conserva la memoria
+      // mientras la aplicación permanezca abierta.
+    }
+  }
+
+  function renderDuplicateGuideNotice(entry) {
+    const isDuplicate = Boolean(entry);
+    elements.duplicateNotice.hidden = !isDuplicate;
+    if (isDuplicate) {
+      elements.duplicatePreviousWeight.textContent = Number(entry.weightKg).toLocaleString('es-VE', {
+        minimumFractionDigits: 3,
+        maximumFractionDigits: 3
+      }) + ' kg';
+      elements.btnSave.textContent = 'Guardar nueva versión';
+    } else {
+      elements.duplicatePreviousWeight.textContent = '';
+      elements.btnSave.textContent = 'Enviar a Google Sheets';
+    }
   }
 
   function isTokenValid() {
@@ -402,12 +521,29 @@
     }
 
     state.guide = guide;
+    state.duplicateGuide = getPreviouslyScannedGuide(guide);
     elements.guideNumber.value = guide;
-    elements.packageWeight.value = '';
+    elements.packageWeight.value = state.duplicateGuide
+      ? Number(state.duplicateGuide.weightKg).toFixed(3)
+      : '';
+    renderDuplicateGuideNotice(state.duplicateGuide);
     elements.packageForm.hidden = false;
     elements.successPanel.hidden = true;
-    setFeedback(elements.saveFeedback, 'Guía capturada. Introduce el peso y guarda el paquete.', 'success');
-    window.setTimeout(() => elements.packageWeight.focus({ preventScroll: true }), 120);
+
+    if (state.duplicateGuide) {
+      setFeedback(
+        elements.saveFeedback,
+        'Esta guía ya se registró hoy desde este dispositivo. Puedes ajustar el peso; si confirmas el envío, se agregará una nueva versión y el sistema administrativo tomará la más reciente.',
+        'warning'
+      );
+    } else {
+      setFeedback(elements.saveFeedback, 'Guía capturada. Introduce el peso y guarda el paquete.', 'success');
+    }
+
+    window.setTimeout(() => {
+      elements.packageWeight.focus({ preventScroll: true });
+      if (state.duplicateGuide) elements.packageWeight.select();
+    }, 120);
   }
 
   async function stopScanner() {
@@ -449,6 +585,7 @@
     }
 
     const guide = String(elements.guideNumber.value || '').trim();
+    const isEdit = Boolean(state.duplicateGuide);
     const weight = parseWeight(elements.packageWeight.value);
     if (!guide) {
       setFeedback(elements.saveFeedback, 'Primero debes escanear un código QR válido.', 'error');
@@ -494,15 +631,22 @@
         throw uncertain;
       }
 
+      // Solo se memoriza la guía después de que Sheets confirme las tres celdas.
+      rememberScannedGuide(guide, weight, timestampISO, updates.updatedRange);
+
+      elements.successTitle.textContent = isEdit ? 'Nueva versión registrada' : 'Paquete registrado';
       elements.successGuide.textContent = guide;
       elements.successWeight.textContent = weight.toLocaleString('es-VE', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' kg';
       elements.successTime.textContent = formatCaracasTime(timestamp);
-      elements.successMessage.textContent = 'Registro confirmado. Preparando el siguiente escaneo…';
+      elements.successMessage.textContent = isEdit
+        ? 'La edición quedó guardada en Google Sheets. El sistema administrativo reconocerá esta versión como la más reciente. Preparando el siguiente escaneo…'
+        : 'Google Sheets confirmó el registro. Preparando el siguiente escaneo…';
       elements.packageForm.hidden = true;
       elements.successPanel.hidden = false;
       elements.btnNext.hidden = true;
       setFeedback(elements.saveFeedback, '');
       state.guide = '';
+      state.duplicateGuide = null;
       saved = true;
     } catch (error) {
       if (error && error.status === 401) {
@@ -527,7 +671,7 @@
       state.saving = false;
       if (!state.uncertainWrite) elements.btnSave.disabled = false;
       elements.btnRescan.disabled = false;
-      elements.btnSave.textContent = 'Enviar a Google Sheets';
+      elements.btnSave.textContent = state.duplicateGuide ? 'Guardar nueva versión' : 'Enviar a Google Sheets';
     }
 
     if (saved) {
@@ -556,6 +700,9 @@
     elements.packageForm.reset();
     elements.guideNumber.value = '';
     elements.packageWeight.value = '';
+    state.guide = '';
+    state.duplicateGuide = null;
+    renderDuplicateGuideNotice(null);
     elements.packageForm.hidden = true;
     elements.successPanel.hidden = true;
     elements.scanPlaceholder.hidden = false;
@@ -611,6 +758,8 @@
 
   function init() {
     bindEvents();
+    loadGuideMemoryForToday();
+    renderDuplicateGuideNotice(null);
     if (initGoogleAuthorization()) {
       if (hasRememberedAuthorization()) {
         setConnection('is-loading', 'Recuperando cuenta', 'Comprobando la autorización que ya concediste…');
