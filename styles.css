@@ -160,3 +160,37 @@ h2 { margin: 0; font-size: 15px; font-weight: 800; letter-spacing: -.2px; }
   .topbar { padding-left: max(28px, calc((100vw - 900px) / 2)); padding-right: max(28px, calc((100vw - 900px) / 2)); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* CUENTA GOOGLE: menú compacto para no ocupar la pantalla principal */
+.topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.account-menu { position: relative; flex: 0 0 auto; }
+.account-menu[hidden] { display: none !important; }
+.account-menu > summary {
+  min-height: 38px; display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; color: var(--ink-soft, #34445c); font-size: 11px; font-weight: 800;
+  list-style: none; cursor: pointer; white-space: nowrap;
+}
+.account-menu > summary::-webkit-details-marker { display: none; }
+.account-menu > summary svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.account-menu[open] > summary { border-color: #b9c8dc; background: var(--surface-soft); }
+.account-menu-panel {
+  position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; width: 205px;
+  display: grid; gap: 5px; padding: 9px; border: 1px solid var(--line); border-radius: 13px;
+  background: #fff; box-shadow: 0 12px 32px rgba(24, 42, 70, .14);
+}
+.account-menu-panel p { margin: 2px 5px 5px; color: var(--muted); font-size: 10px; font-weight: 750; }
+.account-menu-panel button {
+  min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px;
+  background: #fff; color: var(--ink); text-align: left; font-size: 12px; font-weight: 750;
+}
+.account-menu-panel button:hover { background: var(--surface-soft); }
+.connection-card[hidden] { display: none !important; }
+.success-panel { animation: success-in .18s ease-out; }
+@keyframes success-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 390px) {
+  .topbar { gap: 8px; padding-left: 12px; padding-right: 12px; }
+  .topbar-actions { gap: 7px; }
+  .account-menu > summary { padding: 7px 8px; }
+  .connection-badge { font-size: 10px; }
+}
