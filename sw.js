@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lae-scanner-shell-v1';
+const CACHE_NAME = 'lae-scanner-shell-v1.1';
 const APP_FILES = [
   './',
   './index.html',
