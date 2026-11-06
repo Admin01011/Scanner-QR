@@ -3,6 +3,8 @@
 
   const CONFIG = window.LAE_CONFIG || {};
   const $ = (id) => document.getElementById(id);
+  const AUTH_MARKER_KEY = 'laeScanner.googleAuthorizationRemembered.v1';
+
   const state = {
     accessToken: null,
     tokenExpiresAt: 0,
@@ -12,15 +14,24 @@
     saving: false,
     uncertainWrite: false,
     guide: '',
-    lastTimestamp: null
+    authPending: false,
+    authMode: 'user',
+    pendingSaveAfterAuth: false,
+    connected: false,
+    autoRestartTimer: null
   };
 
   const elements = {
     connectionBadge: $('connectionBadge'),
     connectionText: $('connectionText'),
+    connectionCard: $('connectionCard'),
     connectionDetail: $('connectionDetail'),
     connectionFeedback: $('connectionFeedback'),
+    accountMenu: $('accountMenu'),
+    accountMenuStatus: $('accountMenuStatus'),
     btnGoogle: $('btnGoogle'),
+    btnReconnect: $('btnReconnect'),
+    btnChangeAccount: $('btnChangeAccount'),
     btnScan: $('btnScan'),
     scanPlaceholder: $('scanPlaceholder'),
     scannerPanel: $('scannerPanel'),
@@ -34,6 +45,7 @@
     saveFeedback: $('saveFeedback'),
     btnRetryUnknown: $('btnRetryUnknown'),
     successPanel: $('successPanel'),
+    successMessage: $('successMessage'),
     successGuide: $('successGuide'),
     successWeight: $('successWeight'),
     successTime: $('successTime'),
@@ -49,6 +61,48 @@
     elements.connectionBadge.className = 'connection-badge ' + status;
     elements.connectionText.textContent = message;
     if (detail) elements.connectionDetail.textContent = detail;
+    if (elements.accountMenuStatus) {
+      elements.accountMenuStatus.textContent = state.connected ? 'Conectado' : 'Cuenta Google';
+    }
+  }
+
+  function rememberAuthorization() {
+    try { localStorage.setItem(AUTH_MARKER_KEY, '1'); } catch (_) { /* Storage no disponible. */ }
+  }
+
+  function hasRememberedAuthorization() {
+    try { return localStorage.getItem(AUTH_MARKER_KEY) === '1'; }
+    catch (_) { return false; }
+  }
+
+  function forgetAuthorization() {
+    try { localStorage.removeItem(AUTH_MARKER_KEY); } catch (_) { /* Storage no disponible. */ }
+  }
+
+  function isTokenValid() {
+    return Boolean(state.accessToken && Date.now() < state.tokenExpiresAt - 30000);
+  }
+
+  function renderConnectionUI() {
+    elements.connectionCard.hidden = state.connected;
+    elements.accountMenu.hidden = !state.connected;
+    elements.btnScan.disabled = !isTokenValid();
+    if (!state.connected) {
+      elements.accountMenu.open = false;
+      if (!state.authPending || state.authMode !== 'auto') elements.btnGoogle.hidden = false;
+    }
+  }
+
+  function getToken() {
+    if (isTokenValid()) return state.accessToken;
+
+    state.accessToken = null;
+    state.tokenExpiresAt = 0;
+    state.connected = false;
+    setConnection('is-offline', 'Reconexión necesaria', 'La autorización debe renovarse para continuar registrando paquetes.');
+    renderConnectionUI();
+    setFeedback(elements.connectionFeedback, 'Tu cuenta sigue recordada. Pulsa Conectar Google para renovar el acceso; no debería pedirte elegir la cuenta ni repetir el consentimiento.', 'warning');
+    return null;
   }
 
   function hasValidConfig() {
@@ -60,79 +114,111 @@
     );
   }
 
-  function getToken() {
-    if (!state.accessToken || Date.now() >= state.tokenExpiresAt - 30000) {
-      state.accessToken = null;
-      state.tokenExpiresAt = 0;
-      setConnection('is-offline', 'Sesión vencida', 'Vuelve a conectar Google para continuar registrando paquetes.');
-      elements.btnScan.disabled = true;
-      return null;
-    }
-    return state.accessToken;
-  }
-
   function initGoogleAuthorization() {
     if (!hasValidConfig()) {
       setConnection('is-offline', 'Falta configuración', 'Debes colocar el Client ID OAuth de Google en config.js.');
       setFeedback(elements.connectionFeedback, 'Configuración pendiente: GOOGLE_CLIENT_ID.', 'warning');
       elements.btnGoogle.textContent = 'Configurar Google';
-      elements.btnScan.disabled = true;
-      return;
+      renderConnectionUI();
+      return false;
     }
 
     if (!window.google || !google.accounts || !google.accounts.oauth2) {
       setConnection('is-offline', 'Google no disponible', 'No se pudo cargar el servicio de autorización de Google. Revisa la conexión.');
       setFeedback(elements.connectionFeedback, 'No se cargó Google Identity Services. Recarga la página con Internet.', 'error');
-      return;
+      renderConnectionUI();
+      return false;
     }
 
     state.tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.GOOGLE_CLIENT_ID,
       scope: CONFIG.GOOGLE_SCOPE,
-      callback: async (response) => {
-        if (response.error) {
-          elements.btnGoogle.disabled = false;
-          state.accessToken = null;
-          setConnection('is-offline', 'No conectado', 'No se pudo autorizar la cuenta de Google.');
-          setFeedback(elements.connectionFeedback, describeOAuthError(response), 'error');
-          elements.btnScan.disabled = true;
-          return;
-        }
-
-        state.accessToken = response.access_token;
-        state.tokenExpiresAt = Date.now() + (Number(response.expires_in) || 3600) * 1000;
-        setConnection('is-loading', 'Verificando', 'Comprobando acceso a la hoja de Google Sheets…');
-        elements.btnGoogle.disabled = true;
-        setFeedback(elements.connectionFeedback, 'Verificando permisos sobre la pestaña Paquetes…');
-
-        try {
-          const sheet = await verifySheetAccess(state.accessToken);
-          setConnection('is-online', 'Conectado', 'Cuenta autorizada y pestaña Paquetes disponible.');
-          setFeedback(elements.connectionFeedback, 'Conexión correcta con la base de datos LAE.', 'success');
-          elements.btnGoogle.textContent = 'Cambiar cuenta';
-          elements.btnScan.disabled = false;
-          elements.btnScan.focus({ preventScroll: true });
-          return sheet;
-        } catch (error) {
-          state.accessToken = null;
-          state.tokenExpiresAt = 0;
-          setConnection('is-offline', 'Sin acceso a la hoja', 'La cuenta debe tener permiso de editor sobre la base de datos.');
-          setFeedback(elements.connectionFeedback, friendlyGoogleError(error), 'error');
-          elements.btnScan.disabled = true;
-        } finally {
-          elements.btnGoogle.disabled = false;
-        }
-      },
-      error_callback: (error) => {
-        elements.btnGoogle.disabled = false;
-        setConnection('is-offline', 'Autorización cancelada', 'No se completó la conexión con Google.');
-        setFeedback(elements.connectionFeedback, error && error.message ? error.message : 'No se completó la autorización.', 'warning');
-      }
+      // El consentimiento se solicita la primera vez. En las siguientes
+      // autorizaciones se evita forzar el selector de cuentas.
+      prompt: '',
+      callback: handleOAuthResponse,
+      error_callback: handleOAuthUxError
     });
+    return true;
+  }
+
+  async function handleOAuthResponse(response) {
+    state.authPending = false;
+    elements.btnGoogle.disabled = false;
+    elements.btnReconnect.disabled = false;
+    elements.btnChangeAccount.disabled = false;
+
+    if (!response || response.error || !response.access_token) {
+      const message = describeOAuthError(response || {});
+      state.accessToken = null;
+      state.tokenExpiresAt = 0;
+      state.connected = false;
+      setConnection('is-offline', 'No conectado', 'No se pudo recuperar el acceso a Google Sheets.');
+      setFeedback(elements.connectionFeedback, message, 'error');
+      renderConnectionUI();
+      return;
+    }
+
+    state.accessToken = response.access_token;
+    state.tokenExpiresAt = Date.now() + (Number(response.expires_in) || 3600) * 1000;
+    state.connected = false;
+    setConnection('is-loading', 'Verificando', 'Comprobando acceso a la hoja de Google Sheets…');
+    setFeedback(elements.connectionFeedback, 'Verificando los permisos de edición sobre Paquetes…');
+    elements.btnGoogle.disabled = true;
+    renderConnectionUI();
+
+    try {
+      await verifySheetAccess(state.accessToken);
+      state.connected = true;
+      rememberAuthorization();
+      setConnection('is-online', 'Conectado', 'Cuenta autorizada y pestaña Paquetes disponible.');
+      setFeedback(elements.connectionFeedback, 'Conexión correcta con la base de datos LAE.', 'success');
+      renderConnectionUI();
+
+      if (state.pendingSaveAfterAuth) {
+        state.pendingSaveAfterAuth = false;
+        // La guía y el peso permanecen en el formulario mientras se renueva
+        // el token; continúa el envío pendiente automáticamente.
+        await savePackage();
+      }
+    } catch (error) {
+      state.accessToken = null;
+      state.tokenExpiresAt = 0;
+      state.connected = false;
+      forgetAuthorization();
+      setConnection('is-offline', 'Sin acceso a la hoja', 'La cuenta debe tener permiso de editor sobre la base de datos.');
+      setFeedback(elements.connectionFeedback, friendlyGoogleError(error), 'error');
+      renderConnectionUI();
+    } finally {
+      elements.btnGoogle.disabled = false;
+    }
+  }
+
+  function handleOAuthUxError(error) {
+    state.authPending = false;
+    elements.btnGoogle.disabled = false;
+    elements.btnReconnect.disabled = false;
+    elements.btnChangeAccount.disabled = false;
+
+    const reason = error && error.type ? error.type : '';
+    const message = reason === 'popup_failed_to_open'
+      ? 'El navegador bloqueó la ventana de Google. Permite las ventanas emergentes y vuelve a conectar.'
+      : reason === 'popup_closed'
+        ? 'Se cerró la ventana de Google antes de terminar la conexión.'
+        : 'No se pudo completar la autorización. Inténtalo nuevamente.';
+
+    if (!state.connected) {
+      state.accessToken = null;
+      state.tokenExpiresAt = 0;
+      setConnection('is-offline', 'No conectado', 'Se necesita autorización para registrar paquetes.');
+      renderConnectionUI();
+    }
+    setFeedback(elements.connectionFeedback, message, 'warning');
   }
 
   function describeOAuthError(response) {
-    if (response.error === 'access_denied') return 'Se rechazó el permiso solicitado. Autoriza el acceso a Google Sheets para continuar.';
+    if (response.error === 'access_denied') return 'Google no concedió el permiso solicitado. Conecta la cuenta y acepta el acceso a Google Sheets.';
+    if (response.error === 'interaction_required' || response.error === 'login_required') return 'Google necesita que confirmes la cuenta. Pulsa Conectar Google para continuar.';
     return response.error_description || response.error || 'Google no pudo autorizar esta solicitud.';
   }
 
@@ -169,7 +255,7 @@
   }
 
   function friendlyGoogleError(error) {
-    if (error && error.status === 401) return 'La autorización venció o no es válida. Vuelve a conectar Google.';
+    if (error && error.status === 401) return 'La autorización venció o no es válida. Pulsa Conectar Google para renovarla.';
     if (error && error.status === 403) return 'Google rechazó el permiso. Comprueba que esta cuenta tenga acceso de editor a la hoja y que Sheets API esté habilitada en el proyecto de Google Cloud.';
     if (error && error.status === 404) return 'No se encontró la hoja configurada. Comprueba el ID de Google Sheets.';
     if (error && error.message && error.message.includes('No se encontró la pestaña')) return error.message;
@@ -177,7 +263,11 @@
     return error && error.message ? error.message : 'Ocurrió un error inesperado.';
   }
 
-  function requestGoogleAccess() {
+  function requestGoogleAccess(options = {}) {
+    const changeAccount = Boolean(options.changeAccount);
+    const autoRestore = Boolean(options.autoRestore);
+    if (options.resumeSave) state.pendingSaveAfterAuth = true;
+
     if (!hasValidConfig()) {
       setFeedback(elements.connectionFeedback, 'Primero configura GOOGLE_CLIENT_ID en config.js.', 'warning');
       return;
@@ -186,18 +276,38 @@
       setFeedback(elements.connectionFeedback, 'Google Identity Services todavía no está disponible. Recarga la página.', 'error');
       return;
     }
-    if (!state.tokenClient) initGoogleAuthorization();
-    if (!state.tokenClient) return;
+    if (!state.tokenClient && !initGoogleAuthorization()) return;
+    if (state.authPending) return;
 
-    elements.btnGoogle.disabled = true;
-    setConnection('is-loading', 'Conectando', 'Esperando autorización de Google…');
-    setFeedback(elements.connectionFeedback, 'Selecciona la cuenta de Google que tiene permiso de edición sobre la hoja.');
+    state.authPending = true;
+    state.authMode = autoRestore ? 'auto' : (changeAccount ? 'change' : 'user');
+    if (!autoRestore) {
+      elements.btnGoogle.disabled = true;
+      elements.btnReconnect.disabled = true;
+      elements.btnChangeAccount.disabled = true;
+    }
+    if (changeAccount) {
+      state.accessToken = null;
+      state.tokenExpiresAt = 0;
+      state.connected = false;
+    }
+
+    setConnection('is-loading', autoRestore ? 'Recuperando cuenta' : 'Conectando', autoRestore
+      ? 'Recuperando el acceso previamente autorizado…'
+      : 'Solicitando autorización de Google…');
+    if (!autoRestore) setFeedback(elements.connectionFeedback, changeAccount
+      ? 'Selecciona la cuenta de Google que deseas utilizar.'
+      : 'Conectando la cuenta que ya autorizaste. Solo se solicitará consentimiento si Google lo necesita.');
+    renderConnectionUI();
+
     try {
-      state.tokenClient.requestAccessToken({ prompt: 'select_account' });
+      state.tokenClient.requestAccessToken({ prompt: changeAccount ? 'select_account' : '' });
     } catch (error) {
+      state.authPending = false;
       elements.btnGoogle.disabled = false;
       setConnection('is-offline', 'No conectado', 'No se pudo iniciar la autorización.');
       setFeedback(elements.connectionFeedback, friendlyGoogleError(error), 'error');
+      renderConnectionUI();
     }
   }
 
@@ -229,12 +339,12 @@
 
   async function openScanner() {
     if (!getToken()) {
-      setFeedback(elements.connectionFeedback, 'Conecta Google antes de escanear.', 'warning');
-      return;
+      setFeedback(elements.connectionFeedback, 'Conecta Google para continuar escaneando.', 'warning');
+      return false;
     }
     if (!window.Html5Qrcode) {
       setFeedback(elements.scannerFeedback, 'No se pudo cargar el lector QR. Comprueba la conexión a Internet y recarga.', 'error');
-      return;
+      return false;
     }
 
     elements.scanPlaceholder.hidden = true;
@@ -242,7 +352,8 @@
     elements.scannerPanel.hidden = false;
     elements.packageForm.hidden = true;
     elements.successPanel.hidden = true;
-    setFeedback(elements.scannerFeedback, 'Solicitando acceso a la cámara…');
+    elements.btnNext.hidden = true;
+    setFeedback(elements.scannerFeedback, 'Activando cámara…');
 
     try {
       if (!state.scanner) state.scanner = new Html5Qrcode('qr-reader', { verbose: false });
@@ -253,13 +364,16 @@
         () => {}
       );
       state.scanning = true;
-      setFeedback(elements.scannerFeedback, 'Cámara activa. Enfoca el código QR dentro del recuadro.');
+      setFeedback(elements.scannerFeedback, 'Cámara activa. Enfoca el siguiente código QR.');
+      return true;
     } catch (error) {
       state.scanning = false;
       elements.scannerPanel.hidden = true;
       elements.scanPlaceholder.hidden = false;
       elements.btnScan.hidden = false;
-      setFeedback(elements.saveFeedback, cameraError(error), 'error');
+      elements.btnScan.disabled = !isTokenValid();
+      setFeedback(elements.scannerFeedback, cameraError(error), 'error');
+      return false;
     }
   }
 
@@ -281,8 +395,9 @@
 
     if (!guide) {
       elements.btnScan.hidden = false;
-      elements.scanPlaceholder.hidden = false;
-      setFeedback(elements.saveFeedback, 'El QR no contiene un número de guía reconocible. Intenta escanear nuevamente.', 'error');
+      elements.scanPlaceholder.hidden = true;
+      setFeedback(elements.saveFeedback, 'El QR no contiene un número de guía reconocible. Se reactivará el lector…', 'error');
+      window.setTimeout(() => openScanner(), 900);
       return;
     }
 
@@ -291,7 +406,7 @@
     elements.packageWeight.value = '';
     elements.packageForm.hidden = false;
     elements.successPanel.hidden = true;
-    setFeedback(elements.saveFeedback, 'Guía capturada. Introduce el peso para completar el registro.', 'success');
+    setFeedback(elements.saveFeedback, 'Guía capturada. Introduce el peso y guarda el paquete.', 'success');
     window.setTimeout(() => elements.packageWeight.focus({ preventScroll: true }), 120);
   }
 
@@ -321,11 +436,15 @@
   }
 
   async function savePackage(event) {
-    event.preventDefault();
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
     if (state.saving) return;
+
     const token = getToken();
     if (!token) {
-      setFeedback(elements.saveFeedback, 'La sesión de Google venció. Conecta la cuenta nuevamente.', 'error');
+      // El clic en Enviar sirve como gesto del usuario para renovar el token.
+      // Una vez renovado, el mismo formulario se envía automáticamente.
+      setFeedback(elements.saveFeedback, 'Renovando el acceso a Google antes de guardar…', 'warning');
+      requestGoogleAccess({ resumeSave: true });
       return;
     }
 
@@ -354,6 +473,7 @@
     elements.btnRescan.disabled = true;
     elements.btnSave.textContent = 'Enviando…';
     setFeedback(elements.saveFeedback, 'Enviando los datos directamente a Google Sheets…');
+    let saved = false;
 
     try {
       const response = await fetch(url, {
@@ -374,19 +494,25 @@
         throw uncertain;
       }
 
-      state.lastTimestamp = timestamp;
       elements.successGuide.textContent = guide;
       elements.successWeight.textContent = weight.toLocaleString('es-VE', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' kg';
       elements.successTime.textContent = formatCaracasTime(timestamp);
+      elements.successMessage.textContent = 'Registro confirmado. Preparando el siguiente escaneo…';
       elements.packageForm.hidden = true;
       elements.successPanel.hidden = false;
+      elements.btnNext.hidden = true;
       setFeedback(elements.saveFeedback, '');
+      state.guide = '';
+      saved = true;
     } catch (error) {
       if (error && error.status === 401) {
         state.accessToken = null;
         state.tokenExpiresAt = 0;
-        elements.btnScan.disabled = true;
-        setConnection('is-offline', 'Sesión vencida', 'Conecta Google nuevamente para continuar.');
+        state.connected = false;
+        state.pendingSaveAfterAuth = true;
+        setConnection('is-offline', 'Reconexión necesaria', 'Google requiere renovar el acceso.');
+        setFeedback(elements.connectionFeedback, 'El permiso venció. Reconecta Google; el formulario se conservará y el registro continuará después.', 'warning');
+        renderConnectionUI();
       }
       const outcomeIsUncertain = error instanceof TypeError || Boolean(error && error.uncertain) || Boolean(error && [429, 500, 502, 503, 504].includes(error.status));
       if (outcomeIsUncertain) {
@@ -402,6 +528,20 @@
       if (!state.uncertainWrite) elements.btnSave.disabled = false;
       elements.btnRescan.disabled = false;
       elements.btnSave.textContent = 'Enviar a Google Sheets';
+    }
+
+    if (saved) {
+      // Breve confirmación visual y retorno automático al lector.
+      window.clearTimeout(state.autoRestartTimer);
+      state.autoRestartTimer = window.setTimeout(async () => {
+        elements.successPanel.hidden = true;
+        elements.packageForm.reset();
+        elements.guideNumber.value = '';
+        elements.packageWeight.value = '';
+        elements.btnScan.hidden = false;
+        elements.scanPlaceholder.hidden = false;
+        await openScanner();
+      }, 950);
     }
   }
 
@@ -420,21 +560,30 @@
     elements.successPanel.hidden = true;
     elements.scanPlaceholder.hidden = false;
     elements.btnScan.hidden = false;
-    elements.btnScan.disabled = !getToken();
+    elements.btnScan.disabled = !isTokenValid();
     setFeedback(elements.saveFeedback, '');
     if (!elements.btnScan.disabled) openScanner();
   }
 
   async function closeScanner() {
+    window.clearTimeout(state.autoRestartTimer);
     await stopScanner();
     elements.scannerPanel.hidden = true;
     elements.scanPlaceholder.hidden = false;
     elements.btnScan.hidden = false;
-    if (!getToken()) elements.btnScan.disabled = true;
+    if (!isTokenValid()) elements.btnScan.disabled = true;
   }
 
   function bindEvents() {
-    elements.btnGoogle.addEventListener('click', requestGoogleAccess);
+    elements.btnGoogle.addEventListener('click', () => requestGoogleAccess());
+    elements.btnReconnect.addEventListener('click', () => {
+      elements.accountMenu.open = false;
+      requestGoogleAccess();
+    });
+    elements.btnChangeAccount.addEventListener('click', () => {
+      elements.accountMenu.open = false;
+      requestGoogleAccess({ changeAccount: true });
+    });
     elements.btnScan.addEventListener('click', openScanner);
     elements.btnCloseScanner.addEventListener('click', closeScanner);
     elements.packageForm.addEventListener('submit', savePackage);
@@ -462,11 +611,21 @@
 
   function init() {
     bindEvents();
-    if (hasValidConfig()) initGoogleAuthorization();
-    else {
-      setConnection('is-offline', 'Falta configuración', 'Debes colocar el Client ID OAuth de Google en config.js.');
-      setFeedback(elements.connectionFeedback, 'Antes de usar la app, configura GOOGLE_CLIENT_ID en config.js.', 'warning');
-      elements.btnGoogle.textContent = 'Configurar Google';
+    if (initGoogleAuthorization()) {
+      if (hasRememberedAuthorization()) {
+        setConnection('is-loading', 'Recuperando cuenta', 'Comprobando la autorización que ya concediste…');
+        setFeedback(elements.connectionFeedback, 'Restableciendo tu conexión con Google sin volver a pedirte que elijas una cuenta…');
+        renderConnectionUI();
+        elements.btnGoogle.hidden = true;
+        // GIS conserva el consentimiento. Se solicita un token nuevo al abrir,
+        // sin forzar el selector de cuentas ni volver a mostrar consentimiento.
+        requestGoogleAccess({ autoRestore: true });
+      } else {
+        state.connected = false;
+        setConnection('is-offline', 'Sin conectar', 'Conecta una cuenta Google con permiso de edición para comenzar.');
+        setFeedback(elements.connectionFeedback, 'Conecta una cuenta Google para habilitar el escáner.');
+        renderConnectionUI();
+      }
     }
     registerServiceWorker();
   }
