@@ -12,7 +12,7 @@
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png">
   <link rel="apple-touch-icon" href="./assets/icon-192.png">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=1.3.0">
 </head>
 <body>
   <div class="app-shell">
@@ -144,16 +144,16 @@
 
       <section class="security-note">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3zM9 12l2 2 4-4"/></svg>
-        <p>Los datos se envían directamente a Google Sheets. La aplicación no guarda contraseñas ni almacena tokens permanentes; recupera el acceso autorizado al abrirse.</p>
+        <p>Los datos se envían directamente a Google Sheets. Para evitar reconectar en cada recarga, esta aplicación conserva temporalmente en este dispositivo un token de acceso de corta duración. No guarda contraseñas ni refresh tokens.</p>
       </section>
     </main>
 
-    <footer class="app-footer">LAE · CONTROL DE PAQUETES <span>V1.2</span></footer>
+    <footer class="app-footer">LAE · CONTROL DE PAQUETES <span>V1.3</span></footer>
   </div>
 
-  <script src="./config.js"></script>
+  <script src="./config.js?v=1.3.0"></script>
   <script src="https://accounts.google.com/gsi/client"></script>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-  <script src="./app.js"></script>
+  <script src="./app.js?v=1.3.0"></script>
 </body>
 </html>
