@@ -3,7 +3,8 @@
 
   const CONFIG = window.LAE_CONFIG || {};
   const $ = (id) => document.getElementById(id);
-  const AUTH_MARKER_KEY = 'laeScanner.googleAuthorizationRemembered.v1';
+  const AUTH_SESSION_KEY = 'laeScanner.googleAccessSession.v1';
+  const LEGACY_AUTH_MARKER_KEY = 'laeScanner.googleAuthorizationRemembered.v1';
 
   const state = {
     accessToken: null,
@@ -21,6 +22,7 @@
     authMode: 'user',
     pendingSaveAfterAuth: false,
     connected: false,
+    restoringSession: false,
     autoRestartTimer: null
   };
 
@@ -72,17 +74,58 @@
     }
   }
 
+  // Guarda únicamente el access token temporal de Google hasta su vencimiento.
+  // No almacena contraseñas ni refresh tokens. Esto evita abrir el diálogo OAuth
+  // en cada recarga; cuando el token expire, la renovación se inicia desde una
+  // acción explícita del trabajador.
   function rememberAuthorization() {
-    try { localStorage.setItem(AUTH_MARKER_KEY, '1'); } catch (_) { /* Storage no disponible. */ }
+    if (!state.accessToken || !state.tokenExpiresAt || state.tokenExpiresAt <= Date.now()) return;
+    try {
+      localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({
+        accessToken: state.accessToken,
+        expiresAt: state.tokenExpiresAt,
+        clientId: String(CONFIG.GOOGLE_CLIENT_ID || ''),
+        spreadsheetId: String(CONFIG.SPREADSHEET_ID || ''),
+        savedAt: Date.now()
+      }));
+      localStorage.removeItem(LEGACY_AUTH_MARKER_KEY);
+    } catch (_) {
+      // Si el almacenamiento está bloqueado, la sesión durará hasta cerrar o recargar.
+    }
   }
 
-  function hasRememberedAuthorization() {
-    try { return localStorage.getItem(AUTH_MARKER_KEY) === '1'; }
-    catch (_) { return false; }
+  function restoreRememberedAuthorization() {
+    try {
+      const raw = localStorage.getItem(AUTH_SESSION_KEY);
+      localStorage.removeItem(LEGACY_AUTH_MARKER_KEY);
+      if (!raw) return false;
+
+      const saved = JSON.parse(raw);
+      const compatible = saved &&
+        saved.clientId === String(CONFIG.GOOGLE_CLIENT_ID || '') &&
+        saved.spreadsheetId === String(CONFIG.SPREADSHEET_ID || '') &&
+        typeof saved.accessToken === 'string' && saved.accessToken.length > 20 &&
+        Number(saved.expiresAt) > Date.now() + 60000;
+
+      if (!compatible) {
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        return false;
+      }
+
+      state.accessToken = saved.accessToken;
+      state.tokenExpiresAt = Number(saved.expiresAt);
+      return true;
+    } catch (_) {
+      try { localStorage.removeItem(AUTH_SESSION_KEY); } catch (ignored) { /* Storage no disponible. */ }
+      return false;
+    }
   }
 
   function forgetAuthorization() {
-    try { localStorage.removeItem(AUTH_MARKER_KEY); } catch (_) { /* Storage no disponible. */ }
+    try {
+      localStorage.removeItem(AUTH_SESSION_KEY);
+      localStorage.removeItem(LEGACY_AUTH_MARKER_KEY);
+    } catch (_) { /* Storage no disponible. */ }
   }
 
   // Memoria local de guías registradas por este dispositivo durante el día
@@ -203,13 +246,13 @@
   }
 
   function renderConnectionUI() {
-    elements.connectionCard.hidden = state.connected;
+    // Mientras se valida el token guardado, solo mostramos el estado compacto
+    // 'Conectando' del encabezado. La tarjeta aparece si realmente falta acceso.
+    elements.connectionCard.hidden = state.connected || state.restoringSession;
     elements.accountMenu.hidden = !state.connected;
-    elements.btnScan.disabled = !isTokenValid();
-    if (!state.connected) {
-      elements.accountMenu.open = false;
-      if (!state.authPending || state.authMode !== 'auto') elements.btnGoogle.hidden = false;
-    }
+    elements.btnGoogle.hidden = state.connected || state.restoringSession;
+    elements.btnScan.disabled = !(state.connected && isTokenValid());
+    if (!state.connected) elements.accountMenu.open = false;
   }
 
   function getToken() {
@@ -218,9 +261,11 @@
     state.accessToken = null;
     state.tokenExpiresAt = 0;
     state.connected = false;
-    setConnection('is-offline', 'Reconexión necesaria', 'La autorización debe renovarse para continuar registrando paquetes.');
+    state.restoringSession = false;
+    forgetAuthorization();
+    setConnection('is-offline', 'Sesión vencida', 'Para continuar, renueva el acceso a Google.');
     renderConnectionUI();
-    setFeedback(elements.connectionFeedback, 'Tu cuenta sigue recordada. Pulsa Conectar Google para renovar el acceso; no debería pedirte elegir la cuenta ni repetir el consentimiento.', 'warning');
+    setFeedback(elements.connectionFeedback, 'Tu autorización anterior sigue registrada en Google. Pulsa Conectar Google para obtener un nuevo token.', 'warning');
     return null;
   }
 
@@ -263,6 +308,7 @@
 
   async function handleOAuthResponse(response) {
     state.authPending = false;
+    state.restoringSession = false;
     elements.btnGoogle.disabled = false;
     elements.btnReconnect.disabled = false;
     elements.btnChangeAccount.disabled = false;
@@ -315,6 +361,7 @@
 
   function handleOAuthUxError(error) {
     state.authPending = false;
+    state.restoringSession = false;
     elements.btnGoogle.disabled = false;
     elements.btnReconnect.disabled = false;
     elements.btnChangeAccount.disabled = false;
@@ -339,6 +386,40 @@
     if (response.error === 'access_denied') return 'Google no concedió el permiso solicitado. Conecta la cuenta y acepta el acceso a Google Sheets.';
     if (response.error === 'interaction_required' || response.error === 'login_required') return 'Google necesita que confirmes la cuenta. Pulsa Conectar Google para continuar.';
     return response.error_description || response.error || 'Google no pudo autorizar esta solicitud.';
+  }
+
+  async function restoreStoredSession() {
+    state.restoringSession = true;
+    state.connected = false;
+    setConnection('is-loading', 'Conectando', 'Restaurando el acceso guardado en este dispositivo…');
+    setFeedback(elements.connectionFeedback, 'Verificando la sesión…');
+    renderConnectionUI();
+
+    try {
+      await verifySheetAccess(state.accessToken);
+      if (!isTokenValid()) throw Object.assign(new Error('El token guardado ya venció.'), { status: 401 });
+      state.connected = true;
+      state.restoringSession = false;
+      setConnection('is-online', 'Conectado', 'Sesión recuperada sin abrir una ventana de Google.');
+      setFeedback(elements.connectionFeedback, 'Conexión recuperada. Ya puedes escanear paquetes.', 'success');
+      renderConnectionUI();
+    } catch (error) {
+      state.connected = false;
+      state.restoringSession = false;
+      if (error && error.status === 401) {
+        state.accessToken = null;
+        state.tokenExpiresAt = 0;
+        forgetAuthorization();
+        setConnection('is-offline', 'Sesión vencida', 'Vuelve a conectar tu cuenta Google para continuar.');
+        setFeedback(elements.connectionFeedback, 'La sesión guardada venció. Pulsa Conectar Google; no tendrás que borrar la caché.', 'warning');
+      } else {
+        // Conserva el token en caso de una interrupción temporal de red o un
+        // problema de permisos; el usuario puede reintentar o cambiar la cuenta.
+        setConnection('is-offline', 'No se pudo conectar', 'Comprueba Internet y los permisos de edición de la hoja.');
+        setFeedback(elements.connectionFeedback, friendlyGoogleError(error), 'error');
+      }
+      renderConnectionUI();
+    }
   }
 
   async function verifySheetAccess(token) {
@@ -409,6 +490,8 @@
       state.accessToken = null;
       state.tokenExpiresAt = 0;
       state.connected = false;
+      state.restoringSession = false;
+      forgetAuthorization();
     }
 
     setConnection('is-loading', autoRestore ? 'Recuperando cuenta' : 'Conectando', autoRestore
@@ -749,11 +832,27 @@
   }
 
   function registerServiceWorker() {
-    if ('serviceWorker' in navigator && window.isSecureContext) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {
+    if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+
+    let refreshingForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // Cuando una versión nueva toma el control, recarga una sola vez para
+      // mostrar todos sus archivos juntos. Nunca solicita borrar datos del sitio.
+      if (refreshingForUpdate) return;
+      refreshingForUpdate = true;
+      window.location.reload();
+    });
+
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+      .then((registration) => {
+        // Comprueba si GitHub Pages ya publicó una versión nueva.
+        registration.update().catch(() => {
+          // Si no hay red, la versión en caché sigue disponible.
+        });
+      })
+      .catch(() => {
         // La aplicación sigue funcionando aunque el service worker no se registre.
       });
-    }
   }
 
   function init() {
@@ -761,18 +860,15 @@
     loadGuideMemoryForToday();
     renderDuplicateGuideNotice(null);
     if (initGoogleAuthorization()) {
-      if (hasRememberedAuthorization()) {
-        setConnection('is-loading', 'Recuperando cuenta', 'Comprobando la autorización que ya concediste…');
-        setFeedback(elements.connectionFeedback, 'Restableciendo tu conexión con Google sin volver a pedirte que elijas una cuenta…');
-        renderConnectionUI();
-        elements.btnGoogle.hidden = true;
-        // GIS conserva el consentimiento. Se solicita un token nuevo al abrir,
-        // sin forzar el selector de cuentas ni volver a mostrar consentimiento.
-        requestGoogleAccess({ autoRestore: true });
+      if (restoreRememberedAuthorization()) {
+        // Reutiliza el access token local mientras siga vigente y comprueba
+        // directamente el acceso a Sheets. No abre el popup OAuth al recargar.
+        restoreStoredSession();
       } else {
         state.connected = false;
+        state.restoringSession = false;
         setConnection('is-offline', 'Sin conectar', 'Conecta una cuenta Google con permiso de edición para comenzar.');
-        setFeedback(elements.connectionFeedback, 'Conecta una cuenta Google para habilitar el escáner.');
+        setFeedback(elements.connectionFeedback, 'Conecta Google una sola vez en este dispositivo. La sesión temporal se conservará para las siguientes recargas.');
         renderConnectionUI();
       }
     }
