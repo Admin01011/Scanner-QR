@@ -24,9 +24,22 @@
           <span>OPERACIONES · CATIA</span>
         </div>
       </div>
-      <div id="connectionBadge" class="connection-badge is-offline" aria-live="polite">
-        <span class="connection-dot"></span>
-        <span id="connectionText">Sin conectar</span>
+      <div class="topbar-actions">
+        <div id="connectionBadge" class="connection-badge is-offline" aria-live="polite">
+          <span class="connection-dot"></span>
+          <span id="connectionText">Sin conectar</span>
+        </div>
+        <details id="accountMenu" class="account-menu" hidden>
+          <summary aria-label="Opciones de cuenta Google">
+            <span id="accountMenuStatus">Conectado</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="account-menu-panel">
+            <p>Cuenta Google vinculada</p>
+            <button id="btnReconnect" type="button">Reconectar</button>
+            <button id="btnChangeAccount" type="button">Cambiar cuenta</button>
+          </div>
+        </details>
       </div>
     </header>
 
@@ -37,7 +50,7 @@
         <p class="intro-copy">Escanea el código QR, introduce el peso y registra el paquete.</p>
       </section>
 
-      <section class="connection-card card" aria-labelledby="connectionTitle">
+      <section id="connectionCard" class="connection-card card" aria-labelledby="connectionTitle">
         <div class="card-heading">
           <div class="heading-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M8 8h3v3H8zM14 8h2M14 11h2M8 14h3v3H8zM14 14h3v3h-3z"/></svg>
@@ -108,7 +121,7 @@
             <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
           </div>
           <h3>Paquete registrado</h3>
-          <p>Google Sheets confirmó la recepción de los datos.</p>
+          <p id="successMessage">Google Sheets confirmó la recepción de los datos.</p>
           <div class="success-data">
             <span>GUÍA</span>
             <strong id="successGuide">—</strong>
@@ -123,11 +136,11 @@
 
       <section class="security-note">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3zM9 12l2 2 4-4"/></svg>
-        <p>Los datos se envían directamente a Google Sheets. La aplicación no guarda tu contraseña ni conserva el token de acceso al cerrar o recargar.</p>
+        <p>Los datos se envían directamente a Google Sheets. La aplicación no guarda contraseñas ni almacena tokens permanentes; recupera el acceso autorizado al abrirse.</p>
       </section>
     </main>
 
-    <footer class="app-footer">LAE · CONTROL DE PAQUETES <span>V1.0</span></footer>
+    <footer class="app-footer">LAE · CONTROL DE PAQUETES <span>V1.1</span></footer>
   </div>
 
   <script src="./config.js"></script>
