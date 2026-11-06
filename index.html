@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#172a47">
+  <meta name="description" content="Aplicación interna de escaneo y registro de paquetes de LAE Catia.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>LAE Scanner</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">LAE</div>
+        <div class="brand-copy">
+          <strong>LAE Scanner</strong>
+          <span>OPERACIONES · CATIA</span>
+        </div>
+      </div>
+      <div id="connectionBadge" class="connection-badge is-offline" aria-live="polite">
+        <span class="connection-dot"></span>
+        <span id="connectionText">Sin conectar</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <section class="intro">
+        <p class="eyebrow">REGISTRO DE PAQUETES</p>
+        <h1>Escaneo rápido</h1>
+        <p class="intro-copy">Escanea el código QR, introduce el peso y registra el paquete.</p>
+      </section>
+
+      <section class="connection-card card" aria-labelledby="connectionTitle">
+        <div class="card-heading">
+          <div class="heading-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M8 8h3v3H8zM14 8h2M14 11h2M8 14h3v3H8zM14 14h3v3h-3z"/></svg>
+          </div>
+          <div>
+            <h2 id="connectionTitle">Conexión con Google Sheets</h2>
+            <p id="connectionDetail">Conecta una cuenta con permiso de edición sobre la hoja de LAE.</p>
+          </div>
+        </div>
+        <button id="btnGoogle" class="button button-dark button-full" type="button">Conectar Google</button>
+        <p id="connectionFeedback" class="feedback" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="captureCard" class="capture-card card" aria-labelledby="captureTitle">
+        <div class="section-title-row">
+          <div>
+            <p class="eyebrow">NUEVO REGISTRO</p>
+            <h2 id="captureTitle">Registrar paquete</h2>
+          </div>
+          <span class="step-number">01</span>
+        </div>
+
+        <div class="scan-placeholder" id="scanPlaceholder">
+          <div class="scan-illustration" aria-hidden="true">
+            <svg viewBox="0 0 64 64"><path d="M8 23V12a4 4 0 0 1 4-4h11M41 8h11a4 4 0 0 1 4 4v11M56 41v11a4 4 0 0 1-4 4H41M23 56H12a4 4 0 0 1-4-4V41M20 20h10v10H20zM37 20h7M37 27h7M20 37h10v10H20zM37 37h10v10H37z"/></svg>
+          </div>
+          <strong>Escanea el código QR</strong>
+          <span>Coloca la guía frente a la cámara trasera del teléfono.</span>
+        </div>
+
+        <button id="btnScan" class="button button-primary button-full" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M8 8h3v3H8zM14 8h2M14 11h2M8 14h3v3H8zM14 14h3v3h-3z"/></svg>
+          Abrir escáner
+        </button>
+
+        <div id="scannerPanel" class="scanner-panel" hidden>
+          <div class="scanner-panel-heading">
+            <strong>Enfoca el código QR</strong>
+            <button id="btnCloseScanner" class="text-button" type="button">Cerrar cámara</button>
+          </div>
+          <div id="qr-reader" class="qr-reader"></div>
+          <p id="scannerFeedback" class="feedback" role="status" aria-live="polite">Buscando código QR…</p>
+        </div>
+
+        <form id="packageForm" class="package-form" hidden novalidate>
+          <div class="field-group">
+            <label for="guideNumber">Número de guía</label>
+            <input id="guideNumber" name="guideNumber" type="text" readonly autocomplete="off" aria-describedby="guideHelp">
+            <small id="guideHelp">Capturado automáticamente desde el QR.</small>
+          </div>
+          <div class="field-group">
+            <label for="packageWeight">Peso del paquete (kg)</label>
+            <input id="packageWeight" name="packageWeight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 0,500" maxlength="12" required>
+            <small>Introduce el peso en kilogramos.</small>
+          </div>
+          <div class="timestamp-note">
+            <span class="timestamp-icon" aria-hidden="true">◷</span>
+            <span>La fecha y hora se registran automáticamente al enviar.</span>
+          </div>
+          <button id="btnSave" class="button button-primary button-full" type="submit">Enviar a Google Sheets</button>
+          <button id="btnRescan" class="button button-quiet button-full" type="button">Volver a escanear</button>
+          <p id="saveFeedback" class="feedback" role="status" aria-live="polite"></p>
+          <button id="btnRetryUnknown" class="button button-quiet button-full" type="button" hidden>Ya revisé la hoja: permitir reintento</button>
+        </form>
+
+        <section id="successPanel" class="success-panel" hidden aria-live="polite">
+          <div class="success-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
+          </div>
+          <h3>Paquete registrado</h3>
+          <p>Google Sheets confirmó la recepción de los datos.</p>
+          <div class="success-data">
+            <span>GUÍA</span>
+            <strong id="successGuide">—</strong>
+            <span>PESO</span>
+            <strong id="successWeight">—</strong>
+            <span>HORA DE REGISTRO</span>
+            <strong id="successTime">—</strong>
+          </div>
+          <button id="btnNext" class="button button-primary button-full" type="button">Escanear siguiente paquete</button>
+        </section>
+      </section>
+
+      <section class="security-note">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3zM9 12l2 2 4-4"/></svg>
+        <p>Los datos se envían directamente a Google Sheets. La aplicación no guarda tu contraseña ni conserva el token de acceso al cerrar o recargar.</p>
+      </section>
+    </main>
+
+    <footer class="app-footer">LAE · CONTROL DE PAQUETES <span>V1.0</span></footer>
+  </div>
+
+  <script src="./config.js"></script>
+  <script src="https://accounts.google.com/gsi/client"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
