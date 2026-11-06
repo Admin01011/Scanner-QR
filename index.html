@@ -101,6 +101,14 @@
             <input id="guideNumber" name="guideNumber" type="text" readonly autocomplete="off" aria-describedby="guideHelp">
             <small id="guideHelp">Capturado automáticamente desde el QR.</small>
           </div>
+          <aside id="duplicateNotice" class="duplicate-notice" hidden role="status" aria-live="polite">
+            <div class="duplicate-notice-icon" aria-hidden="true">↻</div>
+            <div class="duplicate-notice-copy">
+              <strong>Esta guía ya fue registrada</strong>
+              <p>Se guardó hoy desde este dispositivo. Si confirmas el envío, se agregará una nueva versión. Puedes ajustar el peso antes de hacerlo. El sistema administrativo tomará el registro más reciente.</p>
+              <small>Peso del último registro: <b id="duplicatePreviousWeight"></b></small>
+            </div>
+          </aside>
           <div class="field-group">
             <label for="packageWeight">Peso del paquete (kg)</label>
             <input id="packageWeight" name="packageWeight" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej. 0,500" maxlength="12" required>
@@ -120,7 +128,7 @@
           <div class="success-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>
           </div>
-          <h3>Paquete registrado</h3>
+          <h3 id="successTitle">Paquete registrado</h3>
           <p id="successMessage">Google Sheets confirmó la recepción de los datos.</p>
           <div class="success-data">
             <span>GUÍA</span>
@@ -140,7 +148,7 @@
       </section>
     </main>
 
-    <footer class="app-footer">LAE · CONTROL DE PAQUETES <span>V1.1</span></footer>
+    <footer class="app-footer">LAE · CONTROL DE PAQUETES <span>V1.2</span></footer>
   </div>
 
   <script src="./config.js"></script>
